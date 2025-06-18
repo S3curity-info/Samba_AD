@@ -21,9 +21,12 @@ Requis :
 - Le paquet "samba-tool" doit être installé et fonctionnel
 
 Utilisation typique :  
- 
-- Rendre le script exécutable : chmod u+x SambaAD.sh  
-- Lancer ce script sur la machine Samba AD : ./SambaAD.sh    
+
+- Installation des dépendences pour "pam-authenticate" : apt install gcc libpam0g-dev -y
+- Compilation du script "pam_auth.c" : gcc pam_auth.c -o pam_auth -lpam -lpam_misc
+- Rendre le scripts "pam_auth" exécutable uniquement par root : chmod 700 pam_auth && chown root:root pam_auth
+- Rendre le script "SambaAD.sh" exécutable uniquement par root : chmod 700 SambaAD.sh && chown root:root pam_auth
+- Lancement du script sur la machine Samba AD : ./SambaAD.sh    
 
 Création :  
 PhOeNiX  
