@@ -1,33 +1,3 @@
-# -----------------------------------------------------------------------------
-# Script d'administration pour Samba Active Directory
-#
-# Ce script interactif permet de gérer facilement les comptes utilisateurs
-# dans un domaine Samba AD via l’outil "samba-tool".
-# Il propose un menu simple pour effectuer les opérations les plus courantes :
-#
-# ✅ Création d’utilisateurs avec vérification du mot de passe
-# ✅ Suppression de comptes
-# ✅ Réinitialisation des mots de passe
-# ✅ Activation / désactivation d’utilisateurs
-# ✅ Ajout d’un utilisateur à un groupe
-# ✅ Consultation des informations détaillées d’un utilisateur
-#
-# Fonctionnalités supplémentaires :
-# - Génération automatique d’identifiants ("prenom.nom")
-# - Capitalisation automatique des prénoms et noms
-# - Validation stricte du mot de passe (longueur, majuscules, chiffres, caractères spéciaux)
-# - Interface en ligne de commande claire et lisible
-#
-# Requis :
-# - Le serveur doit être contrôleur de domaine Samba AD
-# - Le paquet "samba-tool" doit être installé et fonctionnel
-#
-# Création :
-# PhOeNiX
-# Web Site : S3curity.info
-# YouTube : PhOeNiX v8.3
-# -----------------------------------------------------------------------------
-
 #!/bin/bash
 
 # Fonction pour mettre la première lettre en majuscule
@@ -66,13 +36,13 @@ select_user() {
     mapfile -t users < <(samba-tool user list | sort)
     while true; do
         clear
-        echo -e "Liste des utilisateurs :\n"
+        echo -e "Liste des utilisateurs :"
         for i in "${!users[@]}"; do
             echo "$((i+1)) - ${users[$i]}"
         done
-echo
+        echo
         echo "0 - Retour au menu principal"
-echo
+        echo
         echo -ne "Entrez le numéro de l'utilisateur : "
         read -r index
 
@@ -82,6 +52,7 @@ echo
             prenom=""
             nom=""
             description=""
+            ou=""
             return 1
         elif [[ "$index" =~ ^[0-9]+$ ]] && (( index >= 1 && index <= ${#users[@]} )); then
             selected_user="${users[$((index-1))]}"
@@ -90,15 +61,52 @@ echo
             prenom=$(echo "$user_info" | grep -i 'givenName:' | awk -F': ' '{print $2}')
             nom=$(echo "$user_info" | grep -i 'sn:' | awk -F': ' '{print $2}')
             description=$(echo "$user_info" | grep -i 'description:' | awk -F': ' '{print $2}')
+	    dn_line=$(echo "$user_info" | grep -i '^dn:')
+	    ou="${dn_line#dn: }"
+
             return 0
         else
-echo
+            echo
             echo -e "❌ Entrée invalide, veuillez réessayer"
             sleep 2
         fi
     done
 }
 
+# Fonction authentification root
+authentifier_root() {
+    echo "🔐 Veuillez entrer le mot de passe root pour continuer"
+    echo
+    ./pam_auth
+    if [[ $? -ne 0 ]]; then
+        echo "❌ Mot de passe incorrect. Opération annulée"
+        clear
+	return 1
+    fi
+    return 0
+}
+
+# Authentification avant accès au menu
+clear
+echo "╔════════════════════════════════════════════════════╗"
+echo "║ 🔐  Authentification requise pour accéder au menu  ║"
+echo "╚════════════════════════════════════════════════════╝"
+echo
+
+if ! authentifier_root; then
+#    echo
+#    echo "❌ Échec de l'authentification root"
+#    echo "🚫 Accès refusé. Fermeture du script..."
+#    echo
+    sleep 2
+    exit 1
+else
+    echo
+    echo "✅ Authentification réussie"
+    sleep 2
+fi
+
+# Menu
 while true; do
 clear
 echo
@@ -125,7 +133,9 @@ echo
     fi
 
     case $choice in
-        1)
+
+# Créer un utilisateur
+1)
 clear
 echo
             echo -n "Prénom : "
@@ -179,7 +189,8 @@ read -rp "Appuyez sur Entrée pour revenir au menu..."
 continue
             ;;
 
-        2)
+# Supprimer un utilisateur
+2)
             if select_user; then
                 samba-tool user delete "$selected_user"
                 clear
@@ -193,38 +204,58 @@ continue
             fi
             ;;
 
-        3)
-            if select_user; then
-                while true; do
-                    echo -n "Nouveau mot de passe : "
-                    read -rs mdp
-                    echo ""
-                    validate_password "$mdp"
-                    if [[ $? -eq 0 ]]; then
-                        break
-                    else
-                        echo "❌ Mot de passe invalide."
-                        echo "Tapez 0 pour annuler ou appuyez sur Entrée pour réessayer"
-                        read -r cancel
-                        if [[ "$cancel" == "0" ]]; then
-                            echo -e "↩️  Retour au menu principal"
-                            sleep 1
-                            continue 2  # revient proprement au menu principal
-                        fi
-                    fi
-                done
-                echo "$mdp" | samba-tool user setpassword "$selected_user"
-                clear
-                echo
-                echo "✅ Mot de passe modifié pour $description ($selected_user)"
-                echo
-                read -rp "Appuyez sur Entrée pour revenir au menu..."
-            else
-                continue
-            fi
-            ;;
+# Réinitialiser le mot de passe d'un utilisateur
+3)
+    if select_user; then
+        while true; do
+            echo -n "Nouveau mot de passe : "
+            read -rs mdp
+            echo
+            echo -n "Confirmez le mot de passe : "
+            read -rs mdp_confirm
+            echo
 
-        4)
+            if [[ "$mdp" != "$mdp_confirm" ]]; then
+                echo "❌ Les mots de passe ne correspondent pas"
+                echo "Tapez 0 pour annuler ou appuyez sur Entrée pour réessayer"
+                read -r cancel
+                if [[ "$cancel" == "0" ]]; then
+                    echo -e "↩️  Retour au menu principal"
+                    sleep 1
+                    continue 2
+                else
+                    continue
+                fi
+            fi
+
+            validate_password "$mdp"
+            if [[ $? -eq 0 ]]; then
+                break
+            else
+                echo "❌ Mot de passe invalide"
+                echo "Tapez 0 pour annuler ou appuyez sur Entrée pour réessayer"
+                read -r cancel
+                if [[ "$cancel" == "0" ]]; then
+                    echo -e "↩️  Retour au menu principal"
+                    sleep 1
+                    continue 2
+                fi
+            fi
+        done
+
+        samba-tool user setpassword "$selected_user" --newpassword="$mdp" --quiet
+        clear
+        echo
+        echo "✅ Mot de passe modifié pour $description ($selected_user)"
+        echo
+        read -rp "Appuyez sur Entrée pour revenir au menu..."
+    else
+        continue
+    fi
+    ;;
+
+# Désactiver un utilisateur
+4)
             if select_user; then
                 samba-tool user disable "$selected_user"
                 clear
@@ -237,7 +268,8 @@ continue
             fi
             ;;
 
-        5)
+# Activer un utilisateur
+5)
             if select_user; then
                 samba-tool user enable "$selected_user"
                 clear
@@ -250,13 +282,14 @@ continue
             fi
             ;;
 
-	6)
+# Ajouter un utilisateur à un groupe
+6)
 	    if select_user; then
 	        # Récupération et tri des groupes
 	        mapfile -t groups < <(samba-tool group list | sort)
 	        while true; do
 	            clear
-	            echo -e "Liste des groupes :\n"
+	            echo -e "Liste des groupes :"
 	            for i in "${!groups[@]}"; do
 	                echo "$((i+1)) - ${groups[$i]}"
 	            done
@@ -277,7 +310,7 @@ continue
 	                read -rp "Appuyez sur Entrée pour revenir au menu..."
 	                break
 	            else
-	                echo -e "❌ Entrée invalide, veuillez saisir un numéro valide."
+	                echo -e "❌ Entrée invalide, veuillez saisir un numéro valide"
 	                sleep 2
 	            fi
 	        done
@@ -286,6 +319,7 @@ continue
 	    fi
 	    ;;
 
+# Afficher les détails d'un utilisateur
 7)
     if select_user; then
         clear
@@ -303,6 +337,8 @@ continue
         sAMAccountName=$(echo "$user_info" | grep -i '^sAMAccountName:' | awk -F': ' '{print $2}')
         userPrincipalName=$(echo "$user_info" | grep -i '^userPrincipalName:' | awk -F': ' '{print $2}')
         userAccountControl=$(echo "$user_info" | grep -i '^userAccountControl:' | awk -F': ' '{print $2}')
+        dn_line=$(echo "$user_info" | grep -i '^dn:')
+        ou="${dn_line#dn: }"
 
         # Formatage simple de la date whenCreated → JJ/MM/AAAA
         jour=${whenCreatedRaw:6:2}
@@ -317,14 +353,15 @@ continue
             statut="✅ Activé"
         fi
 
-        echo -e "👤 Nom complet      : $givenName $sn"
-        echo -e "🆔 Identifiant      : $sAMAccountName"
-        echo -e "📛 Description      : $description"
-        echo -e "📨 Adresse de connexion : $userPrincipalName"
-        echo -e "📅 Créé le          : $whenCreatedFormatted"
-        echo -e "🔓 Dernière connexion   : $lastLogon"
-        echo -e "🔁 Nombre de connexions : $logonCount"
-        echo -e "🔒 Statut du compte     : $statut"
+        echo -e "👤 Nom complet            : $givenName $sn"
+        echo -e "🆔 Identifiant            : $sAMAccountName"
+        echo -e "📛 Description            : $description"
+        echo -e "📂 Emplacement (OU)       : $ou"
+        echo -e "📨 Adresse de connexion   : $userPrincipalName"
+        echo -e "📅 Créé le                : $whenCreatedFormatted"
+        echo -e "🔓 Dernière connexion     : $lastLogon"
+        echo -e "🔁 Nombre de connexions   : $logonCount"
+        echo -e "🔒 Statut du compte       : $statut"
         echo
         read -rp "Appuyez sur Entrée pour revenir au menu..."
     else
